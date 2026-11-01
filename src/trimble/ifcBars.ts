@@ -4,26 +4,21 @@
  * one IfcMappedItem (or IfcSweptDiskSolid) per bar, so the bar positions are in the file even though the
  * viewer API only exposes the group's bounding box.
  */
-
-export interface Vec3 {
-  x: number;
-  y: number;
-  z: number;
-}
+import { add, cross, dot, normalize, scale, type Vec } from "./geometry";
 
 export interface IfcBarGroup {
   globalId: string;
   name: string;
   /** One point on each bar's centreline (the start of its directrix), world millimetres. */
-  bars: Vec3[];
+  bars: Vec[];
 }
 
 /** Rotation (column vectors) plus translation. */
 interface Transform {
-  x: Vec3;
-  y: Vec3;
-  z: Vec3;
-  t: Vec3;
+  x: Vec;
+  y: Vec;
+  z: Vec;
+  t: Vec;
 }
 
 const IDENTITY: Transform = {
@@ -33,21 +28,8 @@ const IDENTITY: Transform = {
   t: { x: 0, y: 0, z: 0 },
 };
 
-const add = (a: Vec3, b: Vec3): Vec3 => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z });
-const scale = (a: Vec3, s: number): Vec3 => ({ x: a.x * s, y: a.y * s, z: a.z * s });
-const dot = (a: Vec3, b: Vec3) => a.x * b.x + a.y * b.y + a.z * b.z;
-const cross = (a: Vec3, b: Vec3): Vec3 => ({
-  x: a.y * b.z - a.z * b.y,
-  y: a.z * b.x - a.x * b.z,
-  z: a.x * b.y - a.y * b.x,
-});
-const normalize = (a: Vec3): Vec3 => {
-  const l = Math.hypot(a.x, a.y, a.z) || 1;
-  return scale(a, 1 / l);
-};
-
-const rotate = (m: Transform, p: Vec3): Vec3 => add(add(scale(m.x, p.x), scale(m.y, p.y)), scale(m.z, p.z));
-const apply = (m: Transform, p: Vec3): Vec3 => add(rotate(m, p), m.t);
+const rotate = (m: Transform, p: Vec): Vec => add(add(scale(m.x, p.x), scale(m.y, p.y)), scale(m.z, p.z));
+const apply = (m: Transform, p: Vec): Vec => add(rotate(m, p), m.t);
 /** `outer ∘ inner`: first inner, then outer. */
 const compose = (outer: Transform, inner: Transform): Transform => ({
   x: rotate(outer, inner.x),
@@ -61,23 +43,23 @@ function splitArgs(args: string): string[] {
   const out: string[] = [];
   let depth = 0;
   let inString = false;
-  let current = "";
+  let start = 0;
   for (let i = 0; i < args.length; i++) {
-    const c = args[i];
-    if (c === "'" && !inString) inString = true;
-    else if (c === "'" && inString) {
-      if (args[i + 1] === "'") {
-        current += c;
-        i++;
-      } else inString = false;
-    } else if (!inString && c === "(") depth++;
-    else if (!inString && c === ")") depth--;
-    if (!inString && depth === 0 && c === ",") {
-      out.push(current.trim());
-      current = "";
-    } else current += c;
+    const c = args.charCodeAt(i);
+    if (c === 39 /* ' */) {
+      if (inString && args.charCodeAt(i + 1) === 39) i++;
+      else inString = !inString;
+    } else if (!inString) {
+      if (c === 40 /* ( */) depth++;
+      else if (c === 41 /* ) */) depth--;
+      else if (c === 44 /* , */ && depth === 0) {
+        out.push(args.slice(start, i).trim());
+        start = i + 1;
+      }
+    }
   }
-  if (current.trim()) out.push(current.trim());
+  const last = args.slice(start).trim();
+  if (last) out.push(last);
   return out;
 }
 
@@ -89,33 +71,78 @@ const refList = (arg: string | undefined): number[] =>
   arg ? [...arg.matchAll(/#(\d+)/g)].map((m) => Number(m[1])) : [];
 const unquote = (arg: string | undefined) => (arg && arg.startsWith("'") ? arg.slice(1, -1).replace(/''/g, "'") : "");
 
+interface RawEntity {
+  type: string;
+  /** Raw argument text; split into arguments only when the entity is used. */
+  raw: string;
+  args?: string[];
+}
+
+/** Caches a pure per-entity computation; placements and bar shapes are shared by many bars. */
+function memo<T>(cache: Map<number, T>, id: number | null, compute: () => T): T {
+  if (id === null) return compute();
+  let value = cache.get(id);
+  if (value === undefined) {
+    value = compute();
+    cache.set(id, value);
+  }
+  return value;
+}
+
 class StepFile {
-  private entities = new Map<number, { type: string; args: string[] }>();
+  private entities = new Map<number, RawEntity>();
+  private placements = new Map<number, Transform>();
+  private axes = new Map<number, Transform>();
+  private items = new Map<number, Vec[]>();
+  readonly bars: number[] = [];
 
   constructor(text: string) {
-    // Tekla writes one entity per line: #id= TYPE(args);
-    for (const m of text.matchAll(/^#(\d+)\s*=\s*([A-Z0-9_]+)\s*\(([\s\S]*?)\)\s*;\s*$/gm)) {
-      this.entities.set(Number(m[1]), { type: m[2], args: splitArgs(m[3]) });
+    // One pass indexing each entity's type and raw arguments: `#id= TYPE(args);`. Entities may span
+    // lines, so a record ends at the first `;` outside a string and outside parentheses.
+    const n = text.length;
+    let i = text.indexOf("DATA;");
+    i = i < 0 ? 0 : i + 5;
+    while (i < n) {
+      i = text.indexOf("#", i);
+      if (i < 0) break;
+      const eq = text.indexOf("=", i);
+      const open = text.indexOf("(", eq);
+      if (eq < 0 || open < 0) break;
+      const id = Number(text.slice(i + 1, eq));
+      const type = text.slice(eq + 1, open).trim();
+      let depth = 0;
+      let inString = false;
+      let j = open;
+      for (; j < n; j++) {
+        const c = text.charCodeAt(j);
+        if (c === 39 /* ' */) inString = !inString;
+        else if (!inString) {
+          if (c === 40 /* ( */) depth++;
+          else if (c === 41 /* ) */ && --depth === 0) break;
+        }
+      }
+      if (Number.isInteger(id) && /^[A-Z0-9_]+$/.test(type)) {
+        this.entities.set(id, { type, raw: text.slice(open + 1, j) });
+        if (type === "IFCREINFORCINGBAR") this.bars.push(id);
+      }
+      i = j + 1;
     }
   }
 
-  get(id: number | null) {
-    return id === null ? undefined : this.entities.get(id);
+  get(id: number | null): { type: string; args: string[] } | undefined {
+    const e = id === null ? undefined : this.entities.get(id);
+    if (!e) return undefined;
+    e.args ??= splitArgs(e.raw);
+    return e as { type: string; args: string[] };
   }
 
-  all(type: string): [number, string[]][] {
-    const out: [number, string[]][] = [];
-    for (const [id, e] of this.entities) if (e.type === type) out.push([id, e.args]);
-    return out;
-  }
-
-  point(id: number | null): Vec3 {
+  point(id: number | null): Vec {
     const e = this.get(id);
     const nums = (e?.args[0] ?? "").replace(/[()]/g, "").split(",").map(Number);
     return { x: nums[0] || 0, y: nums[1] || 0, z: nums[2] || 0 };
   }
 
-  direction(id: number | null, fallback: Vec3): Vec3 {
+  direction(id: number | null, fallback: Vec): Vec {
     const e = this.get(id);
     if (!e || e.type !== "IFCDIRECTION") return fallback;
     const nums = (e.args[0] ?? "").replace(/[()]/g, "").split(",").map(Number);
@@ -124,21 +151,26 @@ class StepFile {
 
   /** IfcAxis2Placement3D(Location, Axis, RefDirection). */
   axis2Placement(id: number | null): Transform {
-    const e = this.get(id);
-    if (!e || e.type !== "IFCAXIS2PLACEMENT3D") return IDENTITY;
-    const z = this.direction(refOf(e.args[1]), { x: 0, y: 0, z: 1 });
-    const ref = this.direction(refOf(e.args[2]), { x: 1, y: 0, z: 0 });
-    const x = normalize(add(ref, scale(z, -dot(ref, z))));
-    return { x, y: cross(z, x), z, t: this.point(refOf(e.args[0])) };
+    return memo(this.axes, id, () => {
+      const e = this.get(id);
+      if (!e || e.type !== "IFCAXIS2PLACEMENT3D") return IDENTITY;
+      const z = this.direction(refOf(e.args[1]), { x: 0, y: 0, z: 1 });
+      const ref = this.direction(refOf(e.args[2]), { x: 1, y: 0, z: 0 });
+      const x = normalize(add(ref, scale(z, -dot(ref, z))));
+      return { x, y: cross(z, x), z, t: this.point(refOf(e.args[0])) };
+    });
   }
 
   /** IfcLocalPlacement(PlacementRelTo, RelativePlacement), resolved to world. */
   placement(id: number | null, depth = 0): Transform {
-    const e = this.get(id);
-    if (!e || e.type !== "IFCLOCALPLACEMENT" || depth > 50) return IDENTITY;
-    const local = this.axis2Placement(refOf(e.args[1]));
-    const parent = refOf(e.args[0]);
-    return parent === null ? local : compose(this.placement(parent, depth + 1), local);
+    if (depth > 50) return IDENTITY;
+    return memo(this.placements, id, () => {
+      const e = this.get(id);
+      if (!e || e.type !== "IFCLOCALPLACEMENT") return IDENTITY;
+      const local = this.axis2Placement(refOf(e.args[1]));
+      const parent = refOf(e.args[0]);
+      return parent === null ? local : compose(this.placement(parent, depth + 1), local);
+    });
   }
 
   /** IfcCartesianTransformationOperator3D(Axis1, Axis2, LocalOrigin, Scale, Axis3); uniform scale only. */
@@ -153,7 +185,7 @@ class StepFile {
   }
 
   /** First point of a curve: polyline vertex, or the line point of the first straight trimmed segment. */
-  curveStart(id: number | null, depth = 0): Vec3 | null {
+  curveStart(id: number | null, depth = 0): Vec | null {
     const e = this.get(id);
     if (!e || depth > 10) return null;
     switch (e.type) {
@@ -177,27 +209,28 @@ class StepFile {
   }
 
   /** Centreline start points of the solids in a representation item, in the item's coordinates. */
-  itemBars(id: number, depth = 0): Vec3[] {
-    const e = this.get(id);
-    if (!e || depth > 10) return [];
-    if (e.type === "IFCSWEPTDISKSOLID") {
-      const p = this.curveStart(refOf(e.args[0]));
-      return p ? [p] : [];
-    }
-    if (e.type === "IFCMAPPEDITEM") {
-      const map = this.get(refOf(e.args[0]));
-      if (!map) return [];
-      const origin = this.axis2Placement(refOf(map.args[0]));
-      const target = this.operator(refOf(e.args[1]));
-      const toItem = compose(target, origin);
-      const shape = this.get(refOf(map.args[1]));
-      return refList(shape?.args[3]).flatMap((it) => this.itemBars(it, depth + 1).map((p) => apply(toItem, p)));
-    }
-    return [];
+  itemBars(id: number, depth = 0): Vec[] {
+    if (depth > 10) return [];
+    return memo(this.items, id, () => {
+      const e = this.get(id);
+      if (!e) return [];
+      if (e.type === "IFCSWEPTDISKSOLID") {
+        const p = this.curveStart(refOf(e.args[0]));
+        return p ? [p] : [];
+      }
+      if (e.type === "IFCMAPPEDITEM") {
+        const map = this.get(refOf(e.args[0]));
+        if (!map) return [];
+        const toItem = compose(this.operator(refOf(e.args[1])), this.axis2Placement(refOf(map.args[0])));
+        const shape = this.get(refOf(map.args[1]));
+        return refList(shape?.args[3]).flatMap((it) => this.itemBars(it, depth + 1).map((p) => apply(toItem, p)));
+      }
+      return [];
+    });
   }
 
   /** Bars of an IfcProductDefinitionShape, using its Body representation. */
-  shapeBars(id: number | null): Vec3[] {
+  shapeBars(id: number | null): Vec[] {
     const shape = this.get(id);
     const reps = refList(shape?.args[2]).map((r) => this.get(r));
     const body = reps.find((r) => unquote(r?.args[1]) === "Body") ?? reps[0];
@@ -210,7 +243,8 @@ export function readIfcBars(text: string): Map<string, IfcBarGroup> {
   const file = new StepFile(text);
   const groups = new Map<string, IfcBarGroup>();
   // IfcReinforcingBar(GlobalId, OwnerHistory, Name, Description, ObjectType, ObjectPlacement, Representation, …)
-  for (const [, args] of file.all("IFCREINFORCINGBAR")) {
+  for (const id of file.bars) {
+    const args = file.get(id)!.args;
     const globalId = unquote(args[0]);
     const world = file.placement(refOf(args[5]));
     const bars = file.shapeBars(refOf(args[6])).map((p) => apply(world, p));

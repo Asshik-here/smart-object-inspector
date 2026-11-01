@@ -1,11 +1,6 @@
 import type { Camera, ColorRGBA, LineMarkup } from "trimble-connect-workspace-api";
+import { add, cross, dot, normalize, scale, type Vec } from "./geometry";
 import { strokeText, strokeWidth } from "./strokeFont";
-
-interface Vec {
-  x: number;
-  y: number;
-  z: number;
-}
 
 /**
  * A dimension value to draw as strokes. Kept as data, not markups, so it can be redrawn facing the
@@ -33,12 +28,6 @@ export interface ViewFrame {
   up: Vec;
   forward: Vec;
 }
-
-const dot = (a: Vec, b: Vec) => a.x * b.x + a.y * b.y + a.z * b.z;
-const cross = (a: Vec, b: Vec): Vec => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
-const scale = (a: Vec, s: number): Vec => ({ x: a.x * s, y: a.y * s, z: a.z * s });
-const add = (a: Vec, b: Vec): Vec => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z });
-const normalize = (a: Vec): Vec => scale(a, 1 / (Math.hypot(a.x, a.y, a.z) || 1));
 
 /**
  * Camera axes in world coordinates. Prefers position/lookAt/upDirection, which are plain world
@@ -84,7 +73,7 @@ function planFrame(label: StrokeLabel): { dir: Vec; up: Vec } {
  * Letter-up is `baseline × view direction`: perpendicular to the baseline, facing the viewer, and
  * never mirrored.
  */
-function cameraFrame(label: StrokeLabel, view: ViewFrame): { dir: Vec; up: Vec } {
+export function cameraFrame(label: StrokeLabel, view: ViewFrame): { dir: Vec; up: Vec } {
   let dir = label.lineDir;
   // A line pointing straight at the camera has no readable direction; fall back to screen axes.
   if (Math.abs(dot(dir, view.forward)) > 0.95) return { dir: view.right, up: view.up };

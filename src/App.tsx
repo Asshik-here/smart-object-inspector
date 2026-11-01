@@ -55,13 +55,11 @@ export default function App() {
   const [annotationOptions, setAnnotationOptions] = useState(loadOptions);
   const ifc = useIfcBars();
   const annotations = useAnnotations(ws.api, ws.selection, annotate, annotationOptions, ifc.index);
-  const pickChain = usePickChain(
-    ws.api,
-    ws.selection,
-    annotationOptions.labelTemplate,
-    annotationOptions.dimensionStyle,
-    annotationOptions.valueText,
-  );
+  const pickChain = usePickChain(ws.api, ws.selection, {
+    labelTemplate: annotationOptions.labelTemplate,
+    style: annotationOptions.dimensionStyle,
+    valueText: annotationOptions.valueText,
+  });
   useDebugDump(ws.api, ws.selection);
   useStrokeLabels(ws.api, annotations.result?.labels ?? NO_LABELS, SELECTION_LABELS);
   useStrokeLabels(ws.api, pickChain.result?.labels ?? NO_LABELS, PICK_LABELS);

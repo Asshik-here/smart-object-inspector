@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModelObjectIds, PointPickedDetail, WorkspaceAPI } from "trimble-connect-workspace-api";
-import {
-  clearAnnotations,
-  drawPickedChain,
-  type DimensionStyle,
-  type ValueText,
-  type PickedChainResult,
-  type PickedPoint,
-} from "./annotations";
 import { addWorkspaceEventHandler } from "./connection";
-import { PICK_MARKUPS, removeLeftovers, saveOwned } from "./ownedMarkups";
+import { PICK_MARKUPS, useMarkupLayer } from "./ownedMarkups";
+import { drawPickedChain, type PickedChainOptions, type PickedChainResult, type PickedPoint } from "./pickedChain";
 
 const REDRAW_DEBOUNCE_MS = 150;
 
@@ -35,10 +28,9 @@ const errorText = (err: unknown) => (err instanceof Error ? err.message : String
 export function usePickChain(
   api: WorkspaceAPI | null,
   selection: ModelObjectIds[],
-  labelTemplate: string,
-  style: DimensionStyle,
-  valueText: ValueText,
+  drawing: Omit<PickedChainOptions, "roundTo">,
 ): PickChainState {
+  const { labelTemplate, style, valueText } = drawing;
   const [active, setActive] = useState(false);
   const [picks, setPicks] = useState<PickedPoint[]>([]);
   const [result, setResult] = useState<PickedChainResult | null>(null);
@@ -46,15 +38,9 @@ export function usePickChain(
   // Picks land on the bar surface, up to a bar radius (~5 mm) off-centre; 10 mm rounding absorbs that.
   const [roundTo, setRoundTo] = useState(10);
   const activeRef = useRef(false);
-  const ownedIds = useRef<number[]>([]);
-  const queue = useRef<Promise<void>>(Promise.resolve());
+  const layer = useMarkupLayer(api, PICK_MARKUPS);
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
-
-  useEffect(() => {
-    if (!api) return;
-    queue.current = queue.current.then(() => removeLeftovers(api, PICK_MARKUPS).catch(() => undefined));
-  }, [api]);
 
   // Collect picks while the tool is active; stop if the user switches to another tool.
   useEffect(() => {
@@ -87,32 +73,21 @@ export function usePickChain(
     });
   }, []);
 
-  // Redraw the chain whenever the picks or rounding change.
+  // Redraw the chain whenever the picks or settings change.
   useEffect(() => {
-    if (!api) return;
+    if (!layer) return;
     const timer = window.setTimeout(() => {
-      queue.current = queue.current.then(async () => {
-        const previous = ownedIds.current;
-        ownedIds.current = [];
-        try {
-          await clearAnnotations(api, previous);
-          saveOwned(PICK_MARKUPS, []);
-          if (picks.length < 2) {
-            setResult(null);
-            return;
-          }
-          const drawn = await drawPickedChain(api, picks, selectionRef.current, roundTo, labelTemplate, style, valueText);
-          ownedIds.current = drawn.owned.map((o) => o.id);
-          saveOwned(PICK_MARKUPS, drawn.owned);
+      const options = { roundTo, labelTemplate, style, valueText };
+      layer
+        .replace(() => (picks.length < 2 ? Promise.resolve(null) : drawPickedChain(layer.api, picks, selectionRef.current, options)))
+        .then((drawn) => {
           setResult(drawn);
           setError(null);
-        } catch (err) {
-          setError(errorText(err));
-        }
-      });
+        })
+        .catch((err) => setError(errorText(err)));
     }, REDRAW_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [api, picks, roundTo, labelTemplate, style, valueText]);
+  }, [layer, picks, roundTo, labelTemplate, style, valueText]);
 
   const start = useCallback(() => {
     if (!api) return;
@@ -147,16 +122,11 @@ export function usePickChain(
     setPicks([]);
   }, [finish]);
 
-  // Leave the viewer tidy when the extension closes.
+  // Don't leave the viewer in picking mode when the extension closes (the layer removes the markups).
   useEffect(() => {
     if (!api) return;
     const cleanup = () => {
       if (activeRef.current) api.viewer.activateTool("reset").catch(() => undefined);
-      const ids = ownedIds.current;
-      ownedIds.current = [];
-      clearAnnotations(api, ids)
-        .then(() => saveOwned(PICK_MARKUPS, []))
-        .catch(() => undefined);
     };
     const unsubscribe = addWorkspaceEventHandler((event) => {
       if (event === "extension.closing") cleanup();

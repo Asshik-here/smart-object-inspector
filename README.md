@@ -87,6 +87,8 @@ Development helpers (the `debug/` dumps and the `soi` console helper) are only a
 | `npm run dev` | Dev server with hot reload on port 5173 |
 | `npm run build` | Type-check and build to `dist/` |
 | `npm run typecheck` | Type-check only |
+| `npm test` | Run the unit tests (Vitest) |
+| `npm run test:watch` | Run the tests on every change |
 | `npm run preview` | Serve the production build on port 5173 |
 
 ## Project structure
@@ -95,16 +97,36 @@ Development helpers (the `debug/` dumps and the `soi` console helper) are only a
 public/manifest.json              Extension manifest (title, URL, icon, 3D Viewer placement)
 src/App.tsx                       Panel layout and settings
 src/components/                   Panel sections (annotations, IFC loader, picking, …)
+
 src/trimble/connection.ts         Connects to Trimble Connect once and fans out events
 src/trimble/useWorkspace.ts       Connection, project, models, selection
-src/trimble/annotations.ts        Dimension chains, labels, tags, overall dimensions
+src/trimble/objectData.ts         Cached, batched viewer data (properties, boxes, IFC GUIDs) per object
+
+src/trimble/annotations.ts        Selection annotations: bar groups, labels, tags, overall dimensions
+src/trimble/pickedChain.ts        Dimension by picking
+src/trimble/chain.ts              Tekla-style spacing chains (runs, leading edge, ticks, extension lines)
+src/trimble/markups.ts            Markup building blocks, styles and colours
+src/trimble/ownedMarkups.ts       MarkupLayer: serialized redraws and clean removal of our markups
+src/trimble/geometry.ts           Vectors, boxes, plan axes
+src/trimble/barProperties.ts      Bar length / count / diameter from properties
+
 src/trimble/ifcBars.ts            Reads per-bar positions from an IFC file
+src/trimble/ifcWorker.ts          Runs the IFC reader in a Web Worker
 src/trimble/labelTemplate.ts      Label notation and property tokens
 src/trimble/spacing.ts            Spacing-property parsing and detection
+src/trimble/strokeFont.ts         Line-drawn digits for underline-free values
 src/trimble/valueLabels.ts        Stroke-drawn values that face the camera
-src/trimble/ownedMarkups.ts       Tracks this extension's markups for clean removal
 src/trimble/debugDump.ts          Dev-only API dumps to debug/*.json and the `soi` console helper
+src/trimble/*.test.ts             Unit tests; testFixtures.ts holds synthetic test data (no real model data)
 ```
+
+## Performance notes
+
+- Viewer data is cached per object and fetched in one call per model, so annotations, picking and the
+  inspector share it (cleared when models are loaded, unloaded or reset).
+- The IFC is parsed in a Web Worker, and only the parsed bar positions are stored in the browser, so a
+  reload doesn't parse again. Roughly 1.5 s per 60 MB of rebar-heavy IFC, without freezing the panel.
+- Markups are replaced as one serialized layer per feature; selection changes are debounced.
 
 ## Debugging
 

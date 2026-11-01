@@ -79,8 +79,10 @@ export function useWorkspace(): WorkspaceState {
   useEffect(() => {
     return addWorkspaceEventHandler((event: string, payload: WorkspaceEventPayload) => {
       const isSelf = payload?.origin?.isSelf === true;
-      // Our own markup calls echo back as events; logging them would flood the log.
-      if (!(isSelf && event === "viewer.onMarkupChanged")) {
+      // Not logged: our own markup calls echoing back, and camera moves (dozens per second while
+      // orbiting) — each log entry re-renders the panel.
+      const noisy = event === "viewer.onCameraChanged" || (isSelf && event === "viewer.onMarkupChanged");
+      if (!noisy) {
         setEvents((prev) =>
           [{ id: ++eventId.current, time: new Date(), event, data: payload?.data, isSelf }, ...prev].slice(
             0,
