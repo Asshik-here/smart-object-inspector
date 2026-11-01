@@ -1,0 +1,9 @@
+{
+  "title": "Smart Object Inspector",
+  "description": "Inspect properties of 3D model objects.",
+  "icon": "http://localhost:5173/icon.svg",
+  "url": "http://localhost:5173/index.html",
+  "extensionType": ["3dviewer"],
+  "type": "panel",
+  "enabled": true
+}
