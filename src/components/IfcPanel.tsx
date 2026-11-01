@@ -1,63 +1,106 @@
-import { useRef, useState } from "react";
+import { useState, type DragEvent } from "react";
 import type { IfcBarsState } from "../trimble/useIfcBars";
 
-/** Loads the model's IFC file so spacing chains can be drawn from the exact bar positions. */
-export function IfcPanel({ ifc }: { ifc: IfcBarsState }) {
-  const input = useRef<HTMLInputElement>(null);
-  const [dragging, setDragging] = useState(false);
+const FileIcon = () => (
+  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+    <path d="M14 3v5h5M9 13h6M9 17h4" />
+  </svg>
+);
 
+const UploadIcon = () => (
+  <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+    <path d="M12 16V4M7 9l5-5 5 5" />
+    <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+  </svg>
+);
+
+/**
+ * The model's IFC file: dropped or chosen once, read for exact per-bar positions so spacing chains are
+ * drawn automatically. Remembered in the browser between sessions.
+ */
+export function IfcPanel({ ifc }: { ifc: IfcBarsState }) {
+  const [dragging, setDragging] = useState(false);
   const pick = (files: FileList | null) => {
     const file = files?.[0];
     if (file) ifc.load(file);
   };
 
-  return (
-    <>
-      {ifc.index ? (
-        <p className="notice ok">
-          <strong>{ifc.fileName}</strong> loaded: {ifc.groupCount} bar groups with exact bar positions. Select bars to
-          see their spacing chains automatically.
-        </p>
-      ) : (
-        <p className="muted">
-          Load the same IFC file that is open in the viewer (Data → file → ⋮ → Download). The spacing between every
-          bar is then drawn automatically when you select a bar group. The file stays in this browser.
-        </p>
-      )}
+  const dropHandlers = {
+    onDragOver: (e: DragEvent) => {
+      e.preventDefault();
+      setDragging(true);
+    },
+    onDragLeave: () => setDragging(false),
+    onDrop: (e: DragEvent) => {
+      e.preventDefault();
+      setDragging(false);
+      pick(e.dataTransfer.files);
+    },
+  };
 
-      <div
-        className={`drop-zone${dragging ? " dragging" : ""}`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragging(false);
-          pick(e.dataTransfer.files);
-        }}
-      >
-        <span className="muted">Drop the .ifc file here, or</span>
-        <button className="button primary" onClick={() => input.current?.click()} disabled={ifc.loading}>
-          {ifc.loading ? "Reading…" : ifc.index ? "Load another IFC" : "Choose IFC file"}
-        </button>
-        {ifc.index && (
-          <button className="button" onClick={ifc.clear}>
+  const input = (
+    <input
+      type="file"
+      accept=".ifc"
+      hidden
+      onChange={(e) => {
+        pick(e.target.files);
+        e.target.value = "";
+      }}
+    />
+  );
+
+  if (ifc.loading) {
+    return (
+      <div className="ifc-card busy" aria-live="polite">
+        <span className="spinner" aria-hidden />
+        <div className="ifc-text">
+          <strong>Reading IFC…</strong>
+          <span className="muted">Large models can take a few seconds.</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (ifc.index) {
+    return (
+      <div className={`ifc-card loaded${dragging ? " dragging" : ""}`} {...dropHandlers}>
+        <span className="ifc-icon">
+          <FileIcon />
+        </span>
+        <div className="ifc-text">
+          <strong title={ifc.fileName ?? undefined}>{ifc.fileName}</strong>
+          <span className="muted">
+            <span className="chip">{ifc.groupCount} bar groups</span>
+          </span>
+        </div>
+        <div className="ifc-actions">
+          <label className="text-button">
+            Replace
+            {input}
+          </label>
+          <button className="text-button subtle" onClick={ifc.clear}>
             Remove
           </button>
-        )}
-        <input
-          ref={input}
-          type="file"
-          accept=".ifc"
-          hidden
-          onChange={(e) => {
-            pick(e.target.files);
-            e.target.value = "";
-          }}
-        />
+        </div>
       </div>
+    );
+  }
+
+  return (
+    <>
+      <label className={`drop-area${dragging ? " dragging" : ""}`} {...dropHandlers}>
+        <span className="drop-icon">
+          <UploadIcon />
+        </span>
+        <strong>Load IFC model</strong>
+        <span className="muted">
+          Drop the <code>.ifc</code> file here or <span className="link">browse</span>
+        </span>
+        <span className="hint">Used to dimension the bar spacing. The file stays in this browser.</span>
+        {input}
+      </label>
       {ifc.error && <p className="status-error">{ifc.error}</p>}
     </>
   );

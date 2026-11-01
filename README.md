@@ -51,21 +51,29 @@ The panel header shows the project name once the extension is connected. Opening
 
 ## Using it
 
-1. **Select** a rebar mesh (for example `B1 PF` + `B2 PF`). Labels, bar mark tags, overall
-   dimensions and height appear.
-2. **Spacing chains**, using one of three sources:
-   - **Bar positions from IFC** (automatic, recommended): download the model's IFC from Trimble
-     Connect (**Data → file → ⋮ → Download**) and load it once in this section. It is remembered in
-     the browser. Each bar's position is read from the file, so every selection gets its chains.
-   - **Spacing property** (automatic): if the model has a property such as `BAR CENTRES = 110 8*200`,
-     it is detected and used.
-   - **Dimension by picking** (manual fallback): click each bar once.
-3. Adjust under **3D annotations**:
-   - **Style**: drawing style (lines, 45° ticks, values) or Trimble measurements.
-   - **Value text**: follows the camera live (Trimble text, underlined) or no underline (redrawn
-     to face the camera after you stop rotating).
-   - **Spacing values**: exact, or merged within ±5 / ±10 mm like a Tekla drawing (`8*200`).
-   - **Layers** and the **label template** (`{NUMBER OF BARS IN GROUP}-{GRADE}{SIZE}-…`).
+The panel has three parts:
+
+- **Header** with the **On/Off** switch. Off hides every dimension; the choice is remembered.
+- **Find**: search the loaded model by bar mark, name, cast unit or any property value. The first
+  search reads the model once (with a progress bar); later searches are instant.
+  1. **Tick** results to select them (they are highlighted and framed in 3D). Use **Select all** /
+     **Unselect all** for every match of the current search. Ticks from earlier searches stay.
+  2. Switch on **Show dimensions** in the blue bar to draw labels, bar mark tags, overall
+     dimensions, height and spacing chains for the ticked objects. **Clear** removes everything.
+  Clicking objects directly in the 3D view does not draw dimensions.
+- **Model**: load the model's IFC once (download it from Trimble Connect: **Data → file → ⋮ →
+  Download**, then drop it on the card). Each bar's position is read from the file, so spacing
+  chains such as `305 · 110 · 8*200` are exact. It is remembered in the browser. Without the IFC,
+  a spacing property such as `BAR CENTRES = 110 8*200` is used when the model has one.
+
+The **Activity** line says what is happening: waiting for a selection, objects selected,
+dimensioning, or groups whose spacing is unknown.
+
+The drawing settings are fixed in `src/App.tsx` (`OPTIONS`) to match the BBS drawings: drawing style
+(thin lines, 45° ticks, plain values), values that follow the camera, all layers, the label
+`{NUMBER OF BARS IN GROUP}-{GRADE}{SIZE}-{REBAR BARMARK}-{centres}-{BAR / PART NAME}`, auto-detected
+spacing properties, and gaps within ±10 mm merged into runs like Tekla (`8*200`). Set
+`mergeTolerance: 0` there to show every deviation exactly.
 
 ## Production hosting
 
@@ -139,6 +147,9 @@ copy(soi.json())    // copy all properties of the selection as JSON
 ```
 
 `debug/` is git-ignored because it contains real model data.
+
+A **Developer card** (connection, raw object JSON, last pick, event log) is available but commented
+out in `src/App.tsx`; uncomment the lines marked `DEVELOPER CARD` to use it under `npm run dev`.
 
 ## Known limitations
 

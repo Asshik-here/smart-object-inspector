@@ -1,28 +1,35 @@
 import { useState } from "react";
-import { AnnotationPanel } from "./components/AnnotationPanel";
-import { IfcPanel } from "./components/IfcPanel";
-import { PickChainPanel } from "./components/PickChainPanel";
 import { ConnectionStatus } from "./components/ConnectionStatus";
-import { JsonView } from "./components/JsonView";
-import { KeyValue } from "./components/KeyValue";
-import { Section } from "./components/Section";
+// DEVELOPER CARD: uncomment to enable (see the note at the bottom of the panel markup).
+// import { DeveloperPanel } from "./components/DeveloperPanel";
+import { Header } from "./components/Header";
+import { IfcPanel } from "./components/IfcPanel";
+import { SearchPanel } from "./components/SearchPanel";
+import { StatusLine } from "./components/StatusLine";
+// DEVELOPER CARD: uncomment to enable.
+// import { Section } from "./components/Section";
 import type { AnnotationOptions } from "./trimble/annotations";
-import { DEFAULT_TEMPLATE, LEGACY_TEMPLATES } from "./trimble/labelTemplate";
+import { DEFAULT_TEMPLATE } from "./trimble/labelTemplate";
 import { useAnnotations } from "./trimble/useAnnotations";
 import { useDebugDump } from "./trimble/debugDump";
 import { useIfcBars } from "./trimble/useIfcBars";
-import { usePickChain } from "./trimble/usePickChain";
-import { PICK_LABELS, SELECTION_LABELS } from "./trimble/ownedMarkups";
+import { useObjectSearch } from "./trimble/useObjectSearch";
+import { SELECTION_LABELS } from "./trimble/ownedMarkups";
 import { useStrokeLabels } from "./trimble/useStrokeLabels";
 import type { StrokeLabel } from "./trimble/valueLabels";
-import { useSelectionProbe } from "./trimble/useSelectionProbe";
+// DEVELOPER CARD: uncomment to enable.
+// import { useSelectionProbe } from "./trimble/useSelectionProbe";
 import { useWorkspace } from "./trimble/useWorkspace";
 
-const OPTIONS_KEY = "soi.annotationOptions";
 /** Stable empty list, so "no labels" doesn't look like a change on every render. */
 const NO_LABELS: StrokeLabel[] = [];
 
-const DEFAULT_OPTIONS: AnnotationOptions = {
+/**
+ * Fixed annotation settings, chosen to match the BBS drawings: drawing style, values that follow the
+ * camera, every layer, the reinforcement notation label, auto-detected spacing, and gaps within ±10 mm
+ * merged into runs as Tekla does (`8*200`).
+ */
+const OPTIONS: AnnotationOptions = {
   labelTemplate: DEFAULT_TEMPLATE,
   spacingToken: "",
   countToken: "",
@@ -30,141 +37,97 @@ const DEFAULT_OPTIONS: AnnotationOptions = {
   tagLayout: "stacked",
   labels: true,
   marks: true,
-  mergeTolerance: 0,
-  dimensionStyle: "drawing",
-  valueText: "markup",
   spacing: true,
   overall: true,
   height: true,
+  dimensionStyle: "drawing",
+  valueText: "markup",
+  mergeTolerance: 10,
 };
 
-function loadOptions(): AnnotationOptions {
+const ENABLED_KEY = "soi.enabled";
+
+/** The On/Off choice survives a reload; storage can be unavailable in sandboxed frames. */
+function storedEnabled(): boolean {
   try {
-    const stored = localStorage.getItem(OPTIONS_KEY);
-    const options: AnnotationOptions = stored ? { ...DEFAULT_OPTIONS, ...JSON.parse(stored) } : DEFAULT_OPTIONS;
-    return LEGACY_TEMPLATES.includes(options.labelTemplate) ? { ...options, labelTemplate: DEFAULT_TEMPLATE } : options;
+    return localStorage.getItem(ENABLED_KEY) !== "false";
   } catch {
-    return DEFAULT_OPTIONS;
+    return true;
   }
 }
 
 export default function App() {
   const ws = useWorkspace();
-  const probe = useSelectionProbe(ws.api, ws.selection);
-  const [annotate, setAnnotate] = useState(true);
-  const [annotationOptions, setAnnotationOptions] = useState(loadOptions);
+  // DEVELOPER CARD: uncomment to enable. Only the developer card uses this; it fetches the first
+  // selected object's properties, IFC GUID and file name.
+  // const probe = useSelectionProbe(ws.api, ws.selection);
   const ifc = useIfcBars();
-  const annotations = useAnnotations(ws.api, ws.selection, annotate, annotationOptions, ifc.index);
-  const pickChain = usePickChain(ws.api, ws.selection, {
-    labelTemplate: annotationOptions.labelTemplate,
-    style: annotationOptions.dimensionStyle,
-    valueText: annotationOptions.valueText,
-  });
+  const [enabled, setEnabled] = useState(storedEnabled);
+  // Ticking objects in the search only selects them; their dimensions are drawn once "Show dimensions"
+  // is switched on. Clicking in 3D never draws anything, and the header switch turns everything off.
+  const search = useObjectSearch(ws.api, ws.models);
+  const [showDimensions, setShowDimensions] = useState(false);
+  const annotations = useAnnotations(ws.api, search.selection, enabled && showDimensions, OPTIONS, ifc.index);
   useDebugDump(ws.api, ws.selection);
   useStrokeLabels(ws.api, annotations.result?.labels ?? NO_LABELS, SELECTION_LABELS);
-  useStrokeLabels(ws.api, pickChain.result?.labels ?? NO_LABELS, PICK_LABELS);
 
-  const updateAnnotationOptions = (next: AnnotationOptions) => {
-    setAnnotationOptions(next);
+  const connected = ws.status === "connected";
+  const toggle = (next: boolean) => {
+    setEnabled(next);
     try {
-      localStorage.setItem(OPTIONS_KEY, JSON.stringify(next));
+      localStorage.setItem(ENABLED_KEY, String(next));
     } catch {
-      // Storage can be unavailable in sandboxed frames; settings then last for this session only.
+      // Not remembered across reloads; harmless.
     }
   };
-  const selectedCount = ws.selection.reduce((n, m) => n + (m.objectRuntimeIds?.length ?? 0), 0);
-  const connected = ws.status === "connected";
 
   return (
     <div className="app">
-      <header className="app-header">
-        <h1>Smart Object Inspector</h1>
-        {connected && ws.project?.name && <span className="phase-tag">{ws.project.name}</span>}
-      </header>
+      <Header
+        projectName={connected ? ws.project?.name : undefined}
+        enabled={enabled}
+        onEnabledChange={toggle}
+        connected={connected}
+      />
 
       {!connected && <ConnectionStatus status={ws.status} error={ws.error} onReconnect={ws.reconnect} />}
 
       {connected && (
         <>
-          <Section title="3D annotations" badge={selectedCount || undefined}>
-            <AnnotationPanel
-              enabled={annotate}
-              onEnabledChange={setAnnotate}
-              options={annotationOptions}
-              onOptionsChange={updateAnnotationOptions}
+          <section className="block">
+            <h2 className="block-title">Find</h2>
+            <SearchPanel search={search} showDimensions={showDimensions} onShowDimensionsChange={setShowDimensions} />
+          </section>
+
+          <section className="block">
+            <h2 className="block-title">Activity</h2>
+            <StatusLine
               state={annotations}
-              sample={probe.result?.properties ?? null}
-              onStartPicking={pickChain.start}
-              picking={pickChain.active}
+              enabled={enabled}
+              showDimensions={showDimensions}
+              selected={search.checked.size}
+              hasIfc={!!ifc.index}
             />
-          </Section>
+          </section>
 
-          <Section title="Bar positions from IFC" badge={ifc.index ? "✓" : undefined} defaultOpen={!ifc.index}>
+          <section className="block">
+            <h2 className="block-title">Model</h2>
             <IfcPanel ifc={ifc} />
-          </Section>
+          </section>
 
-          <Section title="Dimension by picking" defaultOpen={false}>
-            <PickChainPanel chain={pickChain} hasSelection={selectedCount > 0} />
-          </Section>
+          {/*
+            DEVELOPER CARD (disabled). Shows the connection, the selected object's IFC GUID / runtime id /
+            file, its raw getObjectProperties JSON, the last pick and the event log. Useful while developing;
+            it only ever renders under `npm run dev`, never in a production build.
+            To enable it, uncomment this block and every line marked "DEVELOPER CARD" above (the
+            DeveloperPanel, Section and useSelectionProbe imports, and the `const probe = …` line).
 
-          <Section title="Selected object" defaultOpen={false}>
-            {selectedCount === 0 ? (
-              <p className="muted">Click an object in the 3D Viewer.</p>
-            ) : (
-              <>
-                {probe.loading && <p className="muted">Loading properties…</p>}
-                {probe.result && (
-                  <>
-                    <KeyValue
-                      rows={[
-                        ["Name", probe.result.properties?.product?.name],
-                        ["Class", probe.result.properties?.class],
-                        ["IFC GUID", probe.result.externalId],
-                        ["File", probe.result.fileName],
-                      ]}
-                    />
-                    {probe.result.errors.map((e) => (
-                      <p className="status-error" key={e}>
-                        {e}
-                      </p>
-                    ))}
-                  </>
-                )}
-              </>
-            )}
-          </Section>
-
-          <Section title="Developer" defaultOpen={false}>
-            <ConnectionStatus status={ws.status} error={ws.error} onReconnect={ws.reconnect} />
-            <KeyValue
-              rows={[
-                ["Project", ws.project?.name],
-                ["Project ID", ws.project?.id],
-                ["Models", ws.models.map((m) => m.name).join(", ") || "—"],
-                ["Runtime ID", probe.result?.runtimeId],
-              ]}
-            />
-            <Section title="Raw getObjectProperties response" defaultOpen={false}>
-              {probe.result ? <JsonView value={probe.result.properties} /> : <p className="muted">Nothing selected.</p>}
+          {import.meta.env.DEV && (
+            <Section title="Developer" defaultOpen={false}>
+              <DeveloperPanel ws={ws} probe={probe} />
             </Section>
-            <Section title="Last pick (viewer.onPicked)" defaultOpen={false}>
-              {ws.lastPick ? <JsonView value={ws.lastPick} /> : <p className="muted">No pick event received yet.</p>}
-            </Section>
-            <Section title="Event log" badge={ws.events.length} defaultOpen={false}>
-              {ws.events.length === 0 ? (
-                <p className="muted">No events yet.</p>
-              ) : (
-                <ol className="event-log">
-                  {ws.events.map((e) => (
-                    <li key={e.id}>
-                      <time>{e.time.toLocaleTimeString()}</time>
-                      <code>{e.event}</code>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </Section>
-          </Section>
+          )}
+          */}
         </>
       )}
     </div>
