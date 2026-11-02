@@ -30,6 +30,8 @@ export interface WorkspaceState {
   events: LoggedEvent[];
   reconnect: () => void;
   refreshModels: () => void;
+  /** Reads the viewer's current selection, e.g. right after the extension changed it. */
+  refreshSelection: () => Promise<void>;
 }
 
 const MAX_LOGGED_EVENTS = 50;
@@ -92,7 +94,8 @@ export function useWorkspace(): WorkspaceState {
       }
       switch (event) {
         case "viewer.onSelectionChanged": {
-          if (isSelf) break;
+          // Includes selections the extension made itself (ticks in the search): they are the
+          // panel's selection too. Repeats of an identical selection are dropped just below.
           const next = (payload?.data as ModelObjectIds[] | undefined) ?? [];
           // The viewer re-sends the same selection (e.g. after markups are added). Keeping the
           // previous array when nothing changed stops that echo from triggering a redraw loop.
@@ -154,5 +157,24 @@ export function useWorkspace(): WorkspaceState {
 
   const reconnect = useCallback(() => setAttempt((n) => n + 1), []);
 
-  return { status, error, api, project, models, selection, lastPick, events, reconnect, refreshModels };
+  const refreshSelection = useCallback(async () => {
+    const current = apiRef.current;
+    if (!current) return;
+    const next = (await current.viewer.getSelection()) ?? [];
+    setSelection((prev) => (selectionKey(prev) === selectionKey(next) ? prev : next));
+  }, []);
+
+  return {
+    status,
+    error,
+    api,
+    project,
+    models,
+    selection,
+    lastPick,
+    events,
+    reconnect,
+    refreshModels,
+    refreshSelection,
+  };
 }

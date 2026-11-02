@@ -17,51 +17,62 @@ export interface ObjectSearchState {
   error: string | null;
   /** Starts reading the model; called on first focus so opening the panel costs nothing. */
   prepare: () => void;
-  /** Objects ticked in the search: these, and only these, get dimensions in 3D. */
-  checked: Map<string, SearchEntry>;
-  /** The ticked objects as a viewer selection (stable while the ticks don't change). */
-  selection: ModelObjectIds[];
+  /** Keys of the selected objects. The viewer's selection is the source of truth, so objects
+   *  selected by clicking in 3D show as ticked here too. */
+  checked: Set<string>;
   toggle: (entry: SearchEntry) => void;
-  /** How many matches of the current search are ticked. */
+  /** How many matches of the current search are selected. */
   checkedMatches: number;
-  /** Ticks every match of the current search (up to the annotation limit). */
+  /** Selects every match of the current search (up to the annotation limit). */
   checkAllMatches: () => void;
-  /** Unticks every match of the current search; ticks from earlier searches stay. */
+  /** Deselects every match of the current search; other selected objects stay. */
   uncheckAllMatches: () => void;
   /** All reinforcing bar groups of a cast unit (the whole mesh), from the full index. */
   unitBars: (castUnit: string) => SearchEntry[];
-  /** Ticks every bar group of the cast unit, or unticks them if they are all ticked already. */
+  /** Selects every bar group of the cast unit, or deselects them if they are all selected already. */
   toggleUnit: (castUnit: string) => void;
+  /** Deselects everything. */
   clear: () => void;
 }
 
-function toSelection(entries: Iterable<SearchEntry>): ModelObjectIds[] {
+function toSelection(entries: Iterable<{ modelId: string; runtimeId: number }>): ModelObjectIds[] {
   const byModel = new Map<string, number[]>();
   for (const e of entries) byModel.set(e.modelId, [...(byModel.get(e.modelId) ?? []), e.runtimeId]);
   return [...byModel].map(([modelId, objectRuntimeIds]) => ({ modelId, objectRuntimeIds }));
 }
 
+/** Keys of the objects in a viewer selection. */
+function selectionKeys(selection: ModelObjectIds[]): Set<string> {
+  const keys = new Set<string>();
+  for (const m of selection) for (const id of m.objectRuntimeIds ?? []) keys.add(entryKey({ modelId: m.modelId, runtimeId: id }));
+  return keys;
+}
+
 /**
- * Search the loaded models by name, bar mark, cast unit or any property, and tick objects to
- * dimension them. Ticked objects are also selected (highlighted) in the viewer and framed by the camera.
+ * Search the loaded models by name, bar mark, cast unit or any property, and select the results.
+ * Ticking a result changes the viewer's selection (and frames what was added); clicking objects in
+ * 3D shows up as ticks here, because both are the same selection.
  */
-export function useObjectSearch(api: WorkspaceAPI | null, models: ModelSpec[]): ObjectSearchState {
+export function useObjectSearch(
+  api: WorkspaceAPI | null,
+  models: ModelSpec[],
+  viewerSelection: ModelObjectIds[],
+  /** Re-reads the viewer selection after a change, in case the viewer doesn't report it. */
+  refreshSelection: () => Promise<void>,
+): ObjectSearchState {
   const [query, setQuery] = useState("");
   const [entries, setEntries] = useState<SearchEntry[] | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [wanted, setWanted] = useState(false);
-  const [checked, setChecked] = useState<Map<string, SearchEntry>>(() => new Map());
   const run = useRef(0);
-  const highlighted = useRef<ModelObjectIds[]>([]);
-  const highlightQueue = useRef<Promise<unknown>>(Promise.resolve());
-  // The index (and the ticks, which refer to it) are reset when the set of loaded models changes.
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  // The index is rebuilt when the set of loaded models changes.
   const modelsKey = models.map((m) => `${m.id}:${m.versionId}`).sort().join(",");
 
   useEffect(() => {
     setEntries(null);
     setProgress(null);
-    setChecked(new Map());
   }, [modelsKey]);
 
   useEffect(() => {
@@ -86,76 +97,70 @@ export function useObjectSearch(api: WorkspaceAPI | null, models: ModelSpec[]): 
   }, [api, wanted, entries, modelsKey]);
 
   const { results, matches, total } = useMemo(() => searchEntries(entries ?? [], query), [entries, query]);
-  const selection = useMemo(() => toSelection(checked.values()), [checked]);
+  const checked = useMemo(() => selectionKeys(viewerSelection), [viewerSelection]);
+  const checkedRef = useRef(checked);
+  checkedRef.current = checked;
 
-  // Mirror the ticks in the viewer: highlight exactly the ticked objects and frame them. Only objects
-  // this panel highlighted are deselected, so nothing else the user selected is touched.
-  useEffect(() => {
-    if (!api) return;
-    const previous = highlighted.current;
-    highlighted.current = selection;
-    const viewer = api.viewer;
-    // Serialized, so ticking quickly can't interleave remove/add calls.
-    highlightQueue.current = highlightQueue.current
-      .then(async () => {
-        if (previous.length) await viewer.setSelection({ modelObjectIds: previous }, "remove");
-        if (!selection.length) return;
-        await viewer.setSelection({ modelObjectIds: selection }, "add");
-        await viewer.setCamera({ modelObjectIds: selection }, { animationTime: 400 });
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [api, selection]);
+  /**
+   * Adds objects to / removes them from the viewer's selection, serialized so quick clicks can't
+   * interleave. Added objects are framed by the camera; the panel updates when the viewer reports
+   * the new selection.
+   */
+  const change = useCallback(
+    (add: SearchEntry[], remove: SearchEntry[]) => {
+      if (!api || (!add.length && !remove.length)) return;
+      const viewer = api.viewer;
+      queue.current = queue.current
+        .then(async () => {
+          if (remove.length) await viewer.setSelection({ modelObjectIds: toSelection(remove) }, "remove");
+          if (add.length) await viewer.setSelection({ modelObjectIds: toSelection(add) }, "add");
+          await refreshSelection();
+          if (add.length) await viewer.setCamera({ modelObjectIds: toSelection(add) }, { animationTime: 400 });
+        })
+        .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    },
+    [api, refreshSelection],
+  );
 
-  const toggle = useCallback((entry: SearchEntry) => {
-    setChecked((prev) => {
-      const next = new Map(prev);
-      if (next.has(entryKey(entry))) next.delete(entryKey(entry));
-      else next.set(entryKey(entry), entry);
-      return next;
-    });
-  }, []);
+  /** Not-yet-selected entries, capped so the selection stays within the annotation limit. */
+  const addable = (list: SearchEntry[]) => {
+    const room = Math.max(0, MAX_ANNOTATED_OBJECTS - checkedRef.current.size);
+    return list.filter((e) => !checkedRef.current.has(entryKey(e))).slice(0, room);
+  };
+  const selectedOf = (list: SearchEntry[]) => list.filter((e) => checkedRef.current.has(entryKey(e)));
 
-  const checkAllMatches = useCallback(() => {
-    setChecked((prev) => {
-      const next = new Map(prev);
-      for (const e of matches) {
-        if (next.size >= MAX_ANNOTATED_OBJECTS) break;
-        next.set(entryKey(e), e);
-      }
-      return next;
-    });
-  }, [matches]);
+  const toggle = useCallback(
+    (entry: SearchEntry) =>
+      checkedRef.current.has(entryKey(entry)) ? change([], [entry]) : change(addable([entry]), []),
+    // `addable` only reads the ref.
+    [change],
+  );
 
-  const uncheckAllMatches = useCallback(() => {
-    setChecked((prev) => {
-      const next = new Map(prev);
-      for (const e of matches) next.delete(entryKey(e));
-      return next;
-    });
-  }, [matches]);
-
+  const checkAllMatches = useCallback(() => change(addable(matches), []), [change, matches]);
+  const uncheckAllMatches = useCallback(() => change([], selectedOf(matches)), [change, matches]);
   const checkedMatches = useMemo(() => matches.filter((e) => checked.has(entryKey(e))).length, [matches, checked]);
 
   const units = useMemo(() => rebarByCastUnit(entries ?? []), [entries]);
   const unitBars = useCallback((castUnit: string) => units.get(castUnit) ?? NO_ENTRIES, [units]);
-
   const toggleUnit = useCallback(
     (castUnit: string) => {
       const members = units.get(castUnit) ?? NO_ENTRIES;
-      setChecked((prev) => {
-        const next = new Map(prev);
-        const all = members.length > 0 && members.every((e) => next.has(entryKey(e)));
-        for (const e of members) {
-          if (all) next.delete(entryKey(e));
-          else if (next.size < MAX_ANNOTATED_OBJECTS) next.set(entryKey(e), e);
-        }
-        return next;
-      });
+      const all = members.length > 0 && members.every((e) => checkedRef.current.has(entryKey(e)));
+      if (all) change([], members);
+      else change(addable(members), []);
     },
-    [units],
+    [change, units],
   );
 
-  const clear = useCallback(() => setChecked(new Map()), []);
+  const clear = useCallback(() => {
+    if (!api || !viewerSelection.length) return;
+    const selector = { modelObjectIds: viewerSelection };
+    queue.current = queue.current
+      .then(() => api.viewer.setSelection(selector, "remove"))
+      .then(refreshSelection)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, [api, viewerSelection, refreshSelection]);
+
   const prepare = useCallback(() => setWanted(true), []);
 
   return {
@@ -168,7 +173,6 @@ export function useObjectSearch(api: WorkspaceAPI | null, models: ModelSpec[]): 
     error,
     prepare,
     checked,
-    selection,
     toggle,
     checkedMatches,
     checkAllMatches,

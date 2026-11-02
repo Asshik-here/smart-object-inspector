@@ -56,12 +56,13 @@ The panel has three parts:
 
 - **Header** with the **On/Off** switch. Off hides every dimension; the choice is remembered.
 - **Find**: search the loaded model by bar mark, name, cast unit or any property value. The first
-  search reads the model once (with a progress bar); later searches are instant.
-  1. **Tick** results to select them (they are highlighted and framed in 3D). Use **Select all** /
-     **Unselect all** for every match of the current search. Ticks from earlier searches stay.
-  2. Switch on **Show dimensions** in the blue bar to draw labels, bar mark tags, overall
-     dimensions, height and spacing chains for the ticked objects. **Clear** removes everything.
-  Clicking objects directly in the 3D view does not draw dimensions.
+  search reads the model once (with a progress bar); later searches are instant. Results are grouped
+  by cast unit, with one tick for all bar groups of a unit (the whole mesh).
+- **Selection bar** (always shown): how many objects are selected, a **Show dimensions** switch and
+  **Clear**. Ticks in the search and objects clicked in the 3D view are the same selection: ticking
+  selects (and frames) the object, clicking it in 3D shows it ticked. With **Show dimensions** on,
+  everything selected gets labels, bar mark tags, overall dimensions, height and spacing chains
+  (both edge distances included).
 - **Model**: load the model's IFC once (download it from Trimble Connect: **Data → file → ⋮ →
   Download**, then drop it on the card). Each bar's position is read from the file, so spacing
   chains such as `305 · 110 · 8*200` are exact. It is remembered in the browser. Without the IFC,

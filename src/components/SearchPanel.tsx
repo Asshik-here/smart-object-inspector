@@ -45,7 +45,8 @@ interface Props {
 
 /**
  * Find objects by name, bar mark, cast unit or any property value and tick them to select them.
- * Their dimensions are shown in 3D once "Show dimensions" is switched on.
+ * Ticks and the 3D selection are the same: objects clicked in 3D appear ticked. Everything selected
+ * is dimensioned once "Show dimensions" is switched on.
  */
 export function SearchPanel({ search, showDimensions, onShowDimensionsChange }: Props) {
   const { query, results, total, progress, ready, checked } = search;
@@ -141,34 +142,32 @@ export function SearchPanel({ search, showDimensions, onShowDimensionsChange }: 
         </>
       )}
 
-      {checked.size > 0 && (
-        <div className="selection-bar">
-          <span>
-            <strong>{checked.size}</strong> selected
+      {/* Always shown: it reflects any selection, also objects clicked in the 3D view. */}
+      <div className={`selection-bar${checked.size ? "" : " empty"}`} aria-live="polite">
+        <span>{checked.size ? <><strong>{checked.size}</strong> selected</> : "Nothing selected"}</span>
+        <label className="mini-switch">
+          <input
+            type="checkbox"
+            role="switch"
+            checked={showDimensions}
+            onChange={(e) => onShowDimensionsChange(e.target.checked)}
+          />
+          <span className="mini-track" aria-hidden>
+            <span className="mini-knob" />
           </span>
-          <label className="mini-switch">
-            <input
-              type="checkbox"
-              role="switch"
-              checked={showDimensions}
-              onChange={(e) => onShowDimensionsChange(e.target.checked)}
-            />
-            <span className="mini-track" aria-hidden>
-              <span className="mini-knob" />
-            </span>
-            Show dimensions
-          </label>
-          <button
-            className="text-button"
-            onClick={() => {
-              search.clear();
-              onShowDimensionsChange(false);
-            }}
-          >
-            Clear
-          </button>
-        </div>
-      )}
+          Show dimensions
+        </label>
+        <button
+          className="text-button"
+          disabled={!checked.size}
+          onClick={() => {
+            search.clear();
+            onShowDimensionsChange(false);
+          }}
+        >
+          Clear
+        </button>
+      </div>
     </div>
   );
 }

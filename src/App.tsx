@@ -63,11 +63,11 @@ export default function App() {
   // const probe = useSelectionProbe(ws.api, ws.selection);
   const ifc = useIfcBars();
   const [enabled, setEnabled] = useState(storedEnabled);
-  // Ticking objects in the search only selects them; their dimensions are drawn once "Show dimensions"
-  // is switched on. Clicking in 3D never draws anything, and the header switch turns everything off.
-  const search = useObjectSearch(ws.api, ws.models);
+  // Whatever is selected (clicked in 3D or ticked in the search; they're the same selection) gets its
+  // dimensions once "Show dimensions" is switched on. The header switch turns everything off.
+  const search = useObjectSearch(ws.api, ws.models, ws.selection, ws.refreshSelection);
   const [showDimensions, setShowDimensions] = useState(false);
-  const annotations = useAnnotations(ws.api, search.selection, enabled && showDimensions, OPTIONS, ifc.index);
+  const annotations = useAnnotations(ws.api, ws.selection, enabled && showDimensions, OPTIONS, ifc.index);
   useDebugDump(ws.api, ws.selection);
   useStrokeLabels(ws.api, annotations.result?.labels ?? NO_LABELS, SELECTION_LABELS);
 

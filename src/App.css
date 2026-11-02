@@ -896,3 +896,23 @@ input:focus-visible + .check {
 .unit-row .muted {
   font-size: 12px;
 }
+
+.selection-bar.empty {
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.selection-bar.empty .mini-track {
+  background: #c9cdd6;
+}
+
+.selection-bar.empty .text-button {
+  color: var(--muted);
+}
+
+.text-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+  background: none;
+}

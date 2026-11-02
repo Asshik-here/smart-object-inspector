@@ -30,7 +30,7 @@ export function StatusLine({ state, enabled, showDimensions, selected, hasIfc }:
   } else if (!selected) {
     tone = "idle";
     title = "Active";
-    detail = "Search above and tick the objects to dimension.";
+    detail = "Select objects in the 3D view or search above.";
   } else if (!showDimensions) {
     tone = "idle";
     title = `${plural(selected, "object")} selected`;
