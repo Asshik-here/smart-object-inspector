@@ -154,7 +154,7 @@ export async function drawPickedChain(
       renderLabelOrName(options.labelTemplate, g.props),
       complete && gaps.length ? evenCentres(gaps) : null,
     );
-    // As on the drawing: the label continues the dimension line beyond the far bar.
+    // The label continues the dimension line past the far edge.
     const labelEnd = chain.direction === 1 ? Math.max(chain.end, edges.max) : Math.min(chain.end, edges.min);
     const labelAt = planPoint(along, labelEnd + chain.direction * offset * 1.5, across, z);
     set.texts.push(text(planPoint(along, chain.end, across, z), labelAt, label, LABEL_COLOR));

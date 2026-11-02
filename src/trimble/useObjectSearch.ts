@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ModelObjectIds, ModelSpec, WorkspaceAPI } from "trimble-connect-workspace-api";
 import { MAX_ANNOTATED_OBJECTS } from "./annotations";
-import { buildSearchIndex, entryKey, searchEntries, type SearchEntry } from "./objectSearch";
+import { buildSearchIndex, entryKey, rebarByCastUnit, searchEntries, type SearchEntry } from "./objectSearch";
+
+const NO_ENTRIES: SearchEntry[] = [];
 
 export interface ObjectSearchState {
   query: string;
@@ -26,6 +28,10 @@ export interface ObjectSearchState {
   checkAllMatches: () => void;
   /** Unticks every match of the current search; ticks from earlier searches stay. */
   uncheckAllMatches: () => void;
+  /** All reinforcing bar groups of a cast unit (the whole mesh), from the full index. */
+  unitBars: (castUnit: string) => SearchEntry[];
+  /** Ticks every bar group of the cast unit, or unticks them if they are all ticked already. */
+  toggleUnit: (castUnit: string) => void;
   clear: () => void;
 }
 
@@ -130,6 +136,25 @@ export function useObjectSearch(api: WorkspaceAPI | null, models: ModelSpec[]): 
 
   const checkedMatches = useMemo(() => matches.filter((e) => checked.has(entryKey(e))).length, [matches, checked]);
 
+  const units = useMemo(() => rebarByCastUnit(entries ?? []), [entries]);
+  const unitBars = useCallback((castUnit: string) => units.get(castUnit) ?? NO_ENTRIES, [units]);
+
+  const toggleUnit = useCallback(
+    (castUnit: string) => {
+      const members = units.get(castUnit) ?? NO_ENTRIES;
+      setChecked((prev) => {
+        const next = new Map(prev);
+        const all = members.length > 0 && members.every((e) => next.has(entryKey(e)));
+        for (const e of members) {
+          if (all) next.delete(entryKey(e));
+          else if (next.size < MAX_ANNOTATED_OBJECTS) next.set(entryKey(e), e);
+        }
+        return next;
+      });
+    },
+    [units],
+  );
+
   const clear = useCallback(() => setChecked(new Map()), []);
   const prepare = useCallback(() => setWanted(true), []);
 
@@ -148,6 +173,8 @@ export function useObjectSearch(api: WorkspaceAPI | null, models: ModelSpec[]): 
     checkedMatches,
     checkAllMatches,
     uncheckAllMatches,
+    unitBars,
+    toggleUnit,
     clear,
   };
 }

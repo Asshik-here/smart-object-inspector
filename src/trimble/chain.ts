@@ -35,9 +35,9 @@ export const formatRun = (run: Run) => (run.count > 1 ? `${run.count}*${Math.rou
 export interface Chain {
   /** Gap summary read from the starting edge, e.g. "110 + 8*200". */
   summary: string;
-  /** Position of the far bar, where the label continues the dimension line. */
+  /** Far end of the chain (the far edge, or the far bar without edges), where the label continues the line. */
   end: number;
-  /** Direction (+1 / -1 along the axis) from the far bar out to the label. */
+  /** Direction (+1 / -1 along the axis) from the far end out to the label. */
   direction: 1 | -1;
 }
 
@@ -64,7 +64,7 @@ export interface ChainLayout {
   /** Plan coordinate of the dimension line on the other axis. */
   across: number;
   z: number;
-  /** Outer edges along `along`; one edge distance is dimensioned from the leading edge. */
+  /** Outer edges along `along`; the distance from each edge to its nearest bar is dimensioned. */
   edges: Edges | null;
   tolerance?: number;
   /** -1: the chain lies on the min side of the model, +1: on the max side. */
@@ -74,9 +74,9 @@ export interface ChainLayout {
 }
 
 /**
- * Tekla-style dimension chain: one edge → nearest bar, then bar-to-bar gaps (equal runs merged),
- * a tick at every bar and an extension line from each anchor. The far end has no edge dimension;
- * the label continues the line there.
+ * Dimension chain: edge → first bar, bar-to-bar gaps (equal runs merged), last bar → edge, with a
+ * tick at every bar and an extension line from each anchor. Both edge distances are dimensioned so
+ * the bars are located from either side of the mesh; the label continues the line past the far edge.
  */
 export function buildChain(positions: number[], layout: ChainLayout, set: MarkupSet): Chain {
   const { along, across, z, edges, tolerance = GAP_TOLERANCE, side = -1, anchors = [] } = layout;
@@ -84,12 +84,16 @@ export function buildChain(positions: number[], layout: ChainLayout, set: Markup
   const first = positions[0];
   const last = positions[positions.length - 1];
   const lead = edges ? leadingEdge(first, last, edges, runs) : "min";
-  const edgeSegment: Run[] = !edges
+  const edgeSegments: Run[] = !edges
     ? []
-    : lead === "min"
-      ? [{ from: edges.min, to: first, gap: first - edges.min, count: 1 }]
-      : [{ from: last, to: edges.max, gap: edges.max - last, count: 1 }];
-  const segments = [...edgeSegment.filter((s) => s.gap >= MIN_EDGE), ...runs].filter((s) => s.gap >= GAP_TOLERANCE);
+    : [
+        { from: edges.min, to: first, gap: first - edges.min, count: 1 },
+        { from: last, to: edges.max, gap: edges.max - last, count: 1 },
+      ].filter((s) => s.gap >= MIN_EDGE);
+  const segments = [...edgeSegments, ...runs].filter((s) => s.gap >= GAP_TOLERANCE);
+  // The label continues past the far edge when there is one, otherwise past the far bar.
+  const farBar = lead === "min" ? last : first;
+  const farEdge = !edges ? farBar : lead === "min" ? Math.max(last, edges.max) : Math.min(first, edges.min);
 
   const outward = planPoint(along, 0, side, 0);
   for (const s of segments) {
@@ -103,7 +107,7 @@ export function buildChain(positions: number[], layout: ChainLayout, set: Markup
   const fromLead = lead === "min" ? runs : [...runs].reverse();
   return {
     summary: fromLead.map(formatRun).join(" + ") || "—",
-    end: lead === "min" ? last : first,
+    end: farEdge,
     direction: lead === "min" ? 1 : -1,
   };
 }

@@ -14,6 +14,10 @@ export interface SearchEntry {
   text: string;
   /** Lower-cased short names (title, name, bar mark) that rank first when matched exactly. */
   keys: string[];
+  /** Cast unit (precast unit / mesh) the object belongs to, when the model says so. */
+  castUnit: string;
+  /** Reinforcing bars are what a cast unit's "tick all" selects; assemblies would only add clutter. */
+  isRebar: boolean;
 }
 
 /** Objects are read in batches, so a large model doesn't hold up the viewer. */
@@ -68,7 +72,40 @@ export function toEntry(modelId: string, runtimeId: number, props: ObjectPropert
     subtitle,
     text: values.join(" ").toLowerCase(),
     keys: [title, name, mark].filter(Boolean).map((k) => k.toLowerCase()),
+    castUnit,
+    isRebar: /reinforcing/i.test(props?.class ?? ""),
   };
+}
+
+export interface ResultGroup {
+  /** Cast unit mark, or "" for results without one. */
+  castUnit: string;
+  results: SearchEntry[];
+}
+
+/**
+ * Results grouped by cast unit, in order of first appearance, so all bar groups of one mesh sit
+ * together and can be ticked at once. Results without a cast unit form one group with an empty name.
+ */
+export function groupByCastUnit(results: SearchEntry[]): ResultGroup[] {
+  const groups = new Map<string, SearchEntry[]>();
+  for (const r of results) groups.set(r.castUnit, [...(groups.get(r.castUnit) ?? []), r]);
+  return [...groups].map(([castUnit, list]) => ({ castUnit, results: list }));
+}
+
+/**
+ * Every reinforcing bar group per cast unit, from the whole index (not only the current matches).
+ * Built once per index, so unit rows don't each scan the model on every render.
+ */
+export function rebarByCastUnit(entries: SearchEntry[]): Map<string, SearchEntry[]> {
+  const units = new Map<string, SearchEntry[]>();
+  for (const e of entries) {
+    if (!e.castUnit || !e.isRebar) continue;
+    const list = units.get(e.castUnit);
+    if (list) list.push(e);
+    else units.set(e.castUnit, [e]);
+  }
+  return units;
 }
 
 /**

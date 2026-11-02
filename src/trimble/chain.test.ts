@@ -30,7 +30,7 @@ describe("leadingEdge", () => {
 });
 
 describe("buildChain", () => {
-  it("draws Tekla-style: edge distance from the leading side, merged runs, a tick per bar", () => {
+  it("draws both edge distances, merged runs and a tick per bar", () => {
     // The drawing's B1 chain inside 2320: bars at 305, then 8*200, then 110 → read from the max edge
     // (the edge distances tie at 305, and the odd 110 gap is on that side): 305 · 110 · 8*200.
     const bars = positions(305, [200, 200, 200, 200, 200, 200, 200, 200, 110]);
@@ -39,9 +39,11 @@ describe("buildChain", () => {
 
     expect(chain.summary).toBe("110 + 8*200");
     expect(chain.direction).toBe(-1);
-    expect(set.texts.map((t) => t.text).sort()).toEqual(["110", "305", "8*200"]);
-    // One dimension line per segment, one slash per bar and at the edge, no duplicate slashes.
+    expect(set.texts.map((t) => t.text).sort()).toEqual(["110", "305", "305", "8*200"]);
+    // The label continues past the far edge.
+    expect(chain.end).toBe(0);
+    // One slash per bar and one at each edge, no duplicate slashes.
     const slashes = set.lines.filter((l) => l.start.positionX !== l.end.positionX && l.start.positionY !== l.end.positionY);
-    expect(slashes).toHaveLength(10 + 1);
+    expect(slashes).toHaveLength(10 + 2);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceAPI } from "trimble-connect-workspace-api";
-import { buildSearchIndex, searchEntries, toEntry } from "./objectSearch";
+import { buildSearchIndex, groupByCastUnit, rebarByCastUnit, searchEntries, toEntry } from "./objectSearch";
 import { GROUP_PROPERTIES } from "./testFixtures";
 
 const beam = { id: 2, class: "IFCBEAM", product: { name: "Beam 73A" }, properties: [] };
@@ -51,5 +51,27 @@ describe("buildSearchIndex", () => {
 
     expect(index.map((e) => `${e.modelId}:${e.runtimeId}`)).toEqual(["a:1", "a:2", "b:7"]);
     expect(progress.at(-1)).toBe(3);
+  });
+});
+
+describe("cast units", () => {
+  const unit = (id: number, name: string, mark: string, cls = "IFCREINFORCINGBAR") =>
+    toEntry("m", id, {
+      id,
+      class: cls,
+      product: { name },
+      properties: [{ name: "S", properties: [{ name: "CAST UNIT MARK", value: mark, type: 5 }] }],
+    } as never);
+  const all = [unit(1, "B2 PF", "U-1"), unit(2, "B1 PF", "U-1"), unit(3, "MESH", "U-1", "IFCELEMENTASSEMBLY"), unit(4, "B1 PF", "U-2")];
+
+  it("groups results by cast unit in order of appearance", () => {
+    expect(groupByCastUnit(all).map((g) => [g.castUnit, g.results.length])).toEqual([["U-1", 3], ["U-2", 1]]);
+  });
+
+  it("selects every reinforcing bar group of a unit, without the assembly", () => {
+    const units = rebarByCastUnit(all);
+    expect(units.get("U-1")?.map((e) => e.runtimeId)).toEqual([1, 2]);
+    expect(units.get("U-2")?.map((e) => e.runtimeId)).toEqual([4]);
+    expect(units.has("")).toBe(false);
   });
 });

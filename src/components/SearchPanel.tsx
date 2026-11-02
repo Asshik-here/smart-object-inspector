@@ -1,5 +1,5 @@
 import { MAX_ANNOTATED_OBJECTS } from "../trimble/annotations";
-import { entryKey } from "../trimble/objectSearch";
+import { entryKey, groupByCastUnit } from "../trimble/objectSearch";
 import type { ObjectSearchState } from "../trimble/useObjectSearch";
 
 const SearchIcon = () => (
@@ -8,6 +8,34 @@ const SearchIcon = () => (
     <path d="m20 20-3.5-3.5" strokeLinecap="round" />
   </svg>
 );
+
+/**
+ * A cast unit's row: one tick for all of its bar groups (the whole mesh), partly ticked when only
+ * some are. A mesh is several bar groups, and dimensioning only one of them misses the others.
+ */
+function UnitRow({ search, castUnit }: { search: ObjectSearchState; castUnit: string }) {
+  const bars = search.unitBars(castUnit);
+  const ticked = bars.filter((b) => search.checked.has(entryKey(b))).length;
+  const all = bars.length > 0 && ticked === bars.length;
+  return (
+    <label className={`unit-row${all ? " active" : ""}`}>
+      <input
+        type="checkbox"
+        checked={all}
+        ref={(el) => {
+          if (el) el.indeterminate = ticked > 0 && !all;
+        }}
+        onChange={() => search.toggleUnit(castUnit)}
+        disabled={!bars.length}
+      />
+      <span className={`check${ticked > 0 && !all ? " partial" : ""}`} aria-hidden />
+      <strong>{castUnit}</strong>
+      <span className="muted">
+        {bars.length} bar group{bars.length === 1 ? "" : "s"}
+      </span>
+    </label>
+  );
+}
 
 interface Props {
   search: ObjectSearchState;
@@ -81,21 +109,33 @@ export function SearchPanel({ search, showDimensions, onShowDimensionsChange }: 
           </div>
           {results.length > 0 && (
             <ul className="results" role="listbox" aria-label="Search results" aria-multiselectable>
-              {results.map((r) => {
-                const on = checked.has(entryKey(r));
-                return (
-                  <li key={entryKey(r)}>
-                    <label className={`result${on ? " active" : ""}`} role="option" aria-selected={on}>
-                      <input type="checkbox" checked={on} onChange={() => search.toggle(r)} />
-                      <span className="check" aria-hidden />
-                      <span className="result-text">
-                        <strong>{r.title}</strong>
-                        {r.subtitle && <span className="muted">{r.subtitle}</span>}
-                      </span>
-                    </label>
-                  </li>
-                );
-              })}
+              {groupByCastUnit(results).map((group) => (
+                <li
+                  key={group.castUnit || "—"}
+                  className="result-group"
+                  role="group"
+                  aria-label={group.castUnit || "Other results"}
+                >
+                  {group.castUnit && <UnitRow search={search} castUnit={group.castUnit} />}
+                  <ul className={group.castUnit ? "unit-members" : undefined}>
+                    {group.results.map((r) => {
+                      const on = checked.has(entryKey(r));
+                      return (
+                        <li key={entryKey(r)}>
+                          <label className={`result${on ? " active" : ""}`} role="option" aria-selected={on}>
+                            <input type="checkbox" checked={on} onChange={() => search.toggle(r)} />
+                            <span className="check" aria-hidden />
+                            <span className="result-text">
+                              <strong>{r.title}</strong>
+                              {r.subtitle && <span className="muted">{r.subtitle}</span>}
+                            </span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </li>
+              ))}
             </ul>
           )}
         </>
